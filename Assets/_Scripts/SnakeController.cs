@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
 
 // 定义蛇的三种颜色状态
 public enum SnakeColor { Red, Green, Blue }
@@ -30,6 +31,7 @@ public class SnakeController : MonoBehaviour
     [Header("预制体和容器")]
     [SerializeField] private GameObject nodePrefab; // 蛇身体节点的预制体
     [SerializeField] private Transform nodeContainer; // 存放所有蛇节点的父对象
+    [SerializeField] private GameObject foodPrefab; //食物的预制体
 
     private float _moveTimer; // 移动计时器
     private Vector2Int _currentDirection; // 当前移动方向
@@ -40,6 +42,9 @@ public class SnakeController : MonoBehaviour
 
     // 颜色映射表，将枚举转换为Unity的Color
     private Dictionary<SnakeColor, Color> _colorMap;
+
+    private Food _food; // 对食物对象的引用
+    private bool _shouldGrow = false; // 标记下一帧是否需要成长
 
     void Awake()
     {
@@ -55,6 +60,7 @@ public class SnakeController : MonoBehaviour
     void Start()
     {
         InitializeSnake();
+        SpawnFood();
     }
 
     void Update()
@@ -124,30 +130,124 @@ public class SnakeController : MonoBehaviour
         if (_moveTimer >= moveRate)
         {
             _moveTimer -= moveRate;
-
-            // 在移动前，将输入方向同步到当前方向
             _currentDirection = _inputDirection;
 
-            // 计算新的蛇头位置
             Vector2Int newHeadPos = _snakeBody[0].GridPosition + _currentDirection;
-            // 处理边界循环
             newHeadPos = GridManager.Instance.WrapGridPosition(newHeadPos);
 
-            // --- 贪吃蛇移动的核心 ---
-            // 1. 取出蛇尾
-            SnakeNode tail = _snakeBody[_snakeBody.Count - 1];
+            // --- 新增：碰撞检测 ---
+            CheckCollisions(newHeadPos);
+
+            // --- 修改：成长逻辑 ---
+            // 如果需要成长，我们就不移除蛇尾，身体自然就变长了
+            // 同时，我们需要创建一个全新的GameObject作为新的身体部分
+            if (_shouldGrow)
+            {
+                // 在原蛇尾的位置添加一个新节点
+                var oldTail = _snakeBody.Last();
+                CreateNode(oldTail.GridPosition, oldTail.Color);
+                _shouldGrow = false; // 重置成长标记
+            }
+
+            // 贪吃蛇移动的核心
+            SnakeNode tail = _snakeBody.Last();
             _snakeBody.Remove(tail);
-
-            // 2. 将蛇尾移动到新的蛇头位置，并更新它的属性
             tail.GridPosition = newHeadPos;
-            tail.Color = _currentSnakeColor; // 蛇头总使用当前颜色
-
-            // 3. 将它插入到列表的最前面，成为新的蛇头
+            tail.Color = _currentSnakeColor;
             _snakeBody.Insert(0, tail);
 
-            // --- 更新所有节点的视觉效果 ---
             UpdateSnakeVisuals();
         }
+    }
+
+    /// <summary>
+    /// 新增：检测所有可能的碰撞
+    /// </summary>
+    private void CheckCollisions(Vector2Int headPos)
+    {
+        // 1. 检测是否吃到食物
+        if (headPos == _food.GridPosition)
+        {
+            if (_food.Color == _currentSnakeColor)
+            {
+                // 颜色正确：标记成长并生成新食物
+                _shouldGrow = true;
+                SpawnFood();
+            }
+            else
+            {
+                // 颜色错误：游戏结束
+                GameOver("吃错了颜色！");
+            }
+        }
+        else // 如果没吃到食物，才需要检测是否撞到身体
+        {
+            // 2. 检测是否撞到自己身体
+            // 从第二个节点开始检查（第一个是头）
+            for (int i = 1; i < _snakeBody.Count; i++)
+            {
+                if (headPos == _snakeBody[i].GridPosition)
+                {
+                    // 如果撞到的身体部分颜色和蛇头颜色相同
+                    if (_snakeBody[i].Color == _currentSnakeColor)
+                    {
+                        GameOver("撞到了同色的身体！");
+                    }
+                    // 如果颜色不同，则安全穿过，不做任何事
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 新增：生成食物的逻辑
+    /// </summary>
+    private void SpawnFood()
+    {
+        if (_food == null)
+        {
+            // 如果是第一次生成，就从预制体实例化一个
+            GameObject foodGO = Instantiate(foodPrefab);
+            _food = foodGO.GetComponent<Food>();
+        }
+
+        Vector2Int foodPos;
+        // 使用 do-while 循环确保食物不会生成在蛇的身体上
+        do
+        {
+            foodPos = GridManager.Instance.GetRandomGridPosition();
+        } while (IsPositionOnSnake(foodPos));
+
+        // 随机选择一个颜色
+        SnakeColor foodColor = (SnakeColor)Random.Range(0, 3);
+
+        // 设置食物
+        _food.Setup(foodColor, foodPos, _colorMap[foodColor]);
+    }
+
+    /// <summary>
+    /// 新增：辅助函数，检查某个位置是否在蛇身上
+    /// </summary>
+    private bool IsPositionOnSnake(Vector2Int position)
+    {
+        foreach (var node in _snakeBody)
+        {
+            if (node.GridPosition == position)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 新增：游戏结束逻辑
+    /// </summary>
+    private void GameOver(string reason)
+    {
+        Debug.Log($"游戏结束: {reason}");
+        // 暂停游戏。this.enabled = false 会停止这个脚本的Update循环
+        this.enabled = false;
     }
 
     /// <summary>

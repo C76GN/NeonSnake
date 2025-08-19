@@ -246,8 +246,10 @@ public class SnakeController : MonoBehaviour
     private void GameOver(string reason)
     {
         Debug.Log($"游戏结束: {reason}");
-        // 暂停游戏。this.enabled = false 会停止这个脚本的Update循环
-        this.enabled = false;
+        this.enabled = false; // 暂停蛇的移动
+
+        // 新增：通知GameManager显示UI
+        GameManager.Instance.ShowGameOverUI();
     }
 
     /// <summary>
